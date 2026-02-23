@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rapid-Multi | Aprende jugando</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&display=swap');
+        body { font-family: 'Nunito', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .animate-pop { animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        @keyframes pop { 0% { transform: scale(0.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+    </style>
+</head>
+<body class="bg-sky-50 text-gray-800 select-none">
+
+    <div id="app" class="min-h-screen p-4 flex flex-col items-center">
+        <!-- HEADER -->
+        <header class="w-full max-w-md flex justify-between items-center mb-6 bg-white p-4 rounded-2xl shadow-sm border-b-4 border-sky-100">
+            <div class="flex items-center gap-2">
+                <div class="bg-yellow-400 p-2 rounded-full shadow-inner">
+                    <i data-lucide="star" class="text-white fill-current w-5 h-5"></i>
+                </div>
+                <span id="star-count" class="font-black text-xl text-yellow-600">0</span>
+            </div>
+            <h1 class="text-xl font-black text-sky-600 tracking-tight uppercase">Rapid-Multi</h1>
+            <div class="flex gap-2">
+                <button onclick="changeState('stats')" class="p-2 text-sky-300 hover:text-sky-500 transition-colors">
+                    <i data-lucide="bar-chart-2"></i>
+                </button>
+                <button onclick="resetToMenu()" class="p-2 text-sky-300 hover:text-sky-500 transition-colors">
+                    <i data-lucide="home"></i>
+                </button>
+            </div>
+        </header>
+
+        <main id="main-content" class="w-full max-w-md flex-1 flex flex-col">
+            <!-- Las vistas se inyectarán aquí mediante JavaScript -->
+        </main>
+    </div>
+
+    <!-- MODAL DE CONFIRMACIÓN (Oculto por defecto) -->
+    <div id="reset-modal" class="fixed inset-0 bg-sky-900/40 backdrop-blur-sm hidden items-center justify-center p-6 z-50">
+        <div class="bg-white w-full max-w-xs p-8 rounded-[2.5rem] shadow-2xl text-center animate-pop">
+            <div class="bg-yellow-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+                <i data-lucide="book-open" class="text-yellow-600 w-10 h-10"></i>
+            </div>
+            <h3 class="text-2xl font-black text-sky-700 mb-2">¿Ya estudiaste?</h3>
+            <p class="text-gray-500 mb-8 leading-tight">Si ya te sabes estas tablas de memoria, podemos borrar la lista.</p>
+            <div class="flex flex-col gap-3">
+                <button onclick="confirmResetStats()" class="bg-green-500 text-white py-4 rounded-2xl font-black text-lg shadow-lg border-b-4 border-green-700 active:translate-y-1 transition-all">SÍ, ¡YA ME LAS SÉ!</button>
+                <button onclick="closeModal()" class="bg-gray-100 text-gray-500 py-4 rounded-2xl font-bold">Seguiré estudiando</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- ESTADO DE LA APLICACIÓN ---
+        let gameState = 'menu';
+        let stars = parseInt(localStorage.getItem('multi_stars_v1')) || 0;
+        let errorStats = JSON.parse(localStorage.getItem('multi_stats_v3')) || {};
+        
+        let currentQuestions = [];
+        let currentIndex = 0;
+        let score = 0;
+        let timeLeft = 6;
+        let timerInterval = null;
+        let feedback = null;
+        let selectedTableName = '';
+        let roundErrors = [];
+
+        // --- INICIALIZACIÓN ---
+        function init() {
+            updateStars();
+            render();
+        }
+
+        function updateStars() {
+            document.getElementById('star-count').innerText = stars;
+            localStorage.setItem('multi_stars_v1', stars);
+        }
+
+        function saveStats() {
+            localStorage.setItem('multi_stats_v3', JSON.stringify(errorStats));
+        }
+
+        // --- NAVEGACIÓN Y VISTAS ---
+        function render() {
+            const container = document.getElementById('main-content');
+            container.innerHTML = '';
+
+            if (gameState === 'menu') {
+                container.innerHTML = `
+                    <div class="animate-pop text-center">
+                        <h2 class="text-2xl font-black text-sky-700 mb-2">¡Elige tu tabla!</h2>
+                        <p class="text-sky-400 font-medium italic mb-6">Tienes 6 segundos por pregunta</p>
+                        <div class="grid grid-cols-5 gap-3 mb-6">
+                            ${Array.from({length: 10}, (_, i) => i + 1).map(n => `
+                                <button onclick="startPractice(${n})" class="bg-white hover:bg-sky-100 border-2 border-sky-200 py-3 rounded-xl font-black text-xl text-sky-600 transition-all active:scale-90 shadow-sm">${n}</button>
+                            `).join('')}
+                        </div>
+                        <button onclick="startChallenge()" class="w-full bg-gradient-to-r from-orange-400 to-pink-500 text-white py-5 rounded-3xl font-black text-xl shadow-lg mb-4 flex items-center justify-center gap-3 border-b-4 border-pink-700 active:translate-y-1 transition-all">
+                            <i data-lucide="trophy"></i> ¡RETO MEZCLADO!
+                        </button>
+                        <button onclick="changeState('stats')" class="w-full bg-white text-sky-500 py-4 rounded-3xl font-bold text-lg shadow-sm border-2 border-sky-100 flex items-center justify-center gap-3">
+                            <i data-lucide="book-open" class="w-5 h-5"></i> Ver qué debo estudiar
+                        </button>
+                    </div>
+                `;
+            } 
+            else if (gameState === 'playing') {
+                const q = currentQuestions[currentIndex];
+                const options = generateOptions(q.answer);
+                
+                container.innerHTML = `
+                    <div class="flex flex-col items-center">
+                        <div class="w-full mb-4 px-2">
+                            <div class="flex justify-between items-end mb-1">
+                                <span class="text-xs font-black text-sky-400 uppercase flex items-center gap-1"><i data-lucide="clock" class="w-3 h-3"></i> Tiempo</span>
+                                <span id="timer-text" class="text-lg font-black text-sky-500">6.0s</span>
+                            </div>
+                            <div class="w-full bg-white h-4 rounded-full shadow-inner overflow-hidden">
+                                <div id="timer-bar" class="h-full bg-green-400 transition-all duration-100 ease-linear" style="width: 100%"></div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white w-full p-10 rounded-[3rem] shadow-xl border-b-8 border-sky-100 text-center mb-8 relative overflow-hidden">
+                            <div id="feedback-overlay" class="absolute inset-0 flex items-center justify-center hidden z-10"></div>
+                            <div class="text-7xl font-black text-sky-600 mb-2">
+                                ${q.num1} <span class="text-pink-400 text-5xl">×</span> ${q.num2}
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4 w-full">
+                            ${options.map(opt => `
+                                <button onclick="handleAnswer(${opt})" id="opt-${opt}" class="btn-opt py-6 rounded-3xl text-4xl font-black shadow-md transition-all active:scale-90 border-b-4 bg-white text-sky-600 border-sky-50 hover:bg-sky-50">${opt}</button>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+                startTimer();
+            }
+            else if (gameState === 'summary') {
+                container.innerHTML = `
+                    <div class="animate-pop">
+                        <div class="text-center bg-white p-8 rounded-[3rem] shadow-2xl border-b-8 border-yellow-200 mb-6">
+                            <div class="flex justify-center mb-4"><div class="bg-yellow-100 p-6 rounded-full"><i data-lucide="award" class="text-yellow-500 w-16 h-16"></i></div></div>
+                            <h2 class="text-3xl font-black text-sky-700 mb-2">¡Terminado!</h2>
+                            <div class="flex justify-center gap-8 mb-6">
+                                <div class="text-center">
+                                    <div class="text-4xl font-black text-green-500">${score}/10</div>
+                                    <div class="text-[10px] uppercase font-bold text-gray-400 tracking-widest">Aciertos</div>
+                                </div>
+                                <div class="text-center border-l pl-8">
+                                    <div class="text-4xl font-black text-sky-500">+${score * 10}</div>
+                                    <div class="text-[10px] uppercase font-bold text-gray-400 tracking-widest">Puntos</div>
+                                </div>
+                            </div>
+                            ${roundErrors.length > 0 ? `
+                                <div class="bg-sky-50 rounded-2xl p-4 mb-6 text-left">
+                                    <h3 class="text-sky-700 font-black text-sm uppercase mb-3 flex items-center gap-2"><i data-lucide="lightbulb" class="text-yellow-500 w-4 h-4"></i> Para repasar:</h3>
+                                    <div class="grid grid-cols-1 gap-2">
+                                        ${roundErrors.map(eq => `<div class="bg-white px-3 py-2 rounded-xl text-lg font-bold text-sky-600 border-l-4 border-pink-400 shadow-sm">${eq}</div>`).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+                            <div class="flex flex-col gap-3">
+                                <button onclick="replayGame()" class="w-full bg-sky-500 text-white py-4 rounded-2xl font-bold text-lg hover:bg-sky-600 shadow-lg">Intentar de nuevo</button>
+                                <button onclick="resetToMenu()" class="w-full bg-gray-100 text-gray-500 py-4 rounded-2xl font-bold">Volver al menú</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            else if (gameState === 'stats') {
+                const sorted = Object.values(errorStats).sort((a, b) => b.count - a.count).slice(0, 8);
+                container.innerHTML = `
+                    <div class="animate-pop">
+                        <div class="bg-white p-6 rounded-[2rem] shadow-xl border-b-4 border-sky-100 mb-6">
+                            <h2 class="text-2xl font-black text-sky-600 mb-4 flex items-center gap-2"><i data-lucide="book-open" class="text-yellow-400"></i> Tu Cuaderno</h2>
+                            ${sorted.length > 0 ? `
+                                <div class="space-y-3 mb-6 max-h-80 overflow-y-auto pr-2">
+                                    <p class="text-gray-400 text-sm italic mb-2">Aquí tienes lo que más te ha costado:</p>
+                                    ${sorted.map(err => `
+                                        <div class="flex justify-between items-center bg-sky-50 p-4 rounded-2xl border-l-4 border-pink-400">
+                                            <span class="text-2xl font-black text-sky-600 tracking-wider">${err.label}</span>
+                                            <span class="bg-pink-100 text-pink-600 px-3 py-1 rounded-full font-black text-[10px] uppercase">${err.count} fallos</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            ` : `
+                                <div class="text-center py-10">
+                                    <i data-lucide="check-circle-2" class="text-green-400 w-16 h-16 mx-auto mb-4"></i>
+                                    <p class="text-sky-600 font-bold text-xl">¡Qué lista eres!</p>
+                                    <p class="text-gray-400 text-sm italic mt-2">No tienes errores registrados.</p>
+                                </div>
+                            `}
+                            <div class="flex flex-col gap-3">
+                                <button onclick="resetToMenu()" class="w-full bg-sky-500 text-white py-4 rounded-2xl font-bold shadow-lg">¡A jugar!</button>
+                                ${sorted.length > 0 ? `<button onclick="openResetModal()" class="w-full bg-white text-red-400 py-4 rounded-2xl font-bold border-2 border-red-50">Borrar cuaderno</button>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            lucide.createIcons();
+        }
+
+        // --- LÓGICA DE JUEGO ---
+        function startPractice(table) {
+            selectedTableName = table;
+            currentQuestions = Array.from({length: 10}, (_, i) => ({
+                num1: table,
+                num2: i + 1,
+                answer: table * (i + 1)
+            })).sort(() => Math.random() - 0.5);
+            prepareRound();
+        }
+
+        function startChallenge() {
+            selectedTableName = 'Mezclada';
+            currentQuestions = Array.from({length: 10}, () => {
+                const n1 = Math.floor(Math.random() * 10) + 1;
+                const n2 = Math.floor(Math.random() * 10) + 1;
+                return { num1: n1, num2: n2, answer: n1 * n2 };
+            });
+            prepareRound();
+        }
+
+        function prepareRound() {
+            currentIndex = 0;
+            score = 0;
+            roundErrors = [];
+            feedback = null;
+            gameState = 'playing';
+            render();
+        }
+
+        function replayGame() {
+            if (selectedTableName === 'Mezclada') startChallenge();
+            else startPractice(selectedTableName);
+        }
+
+        function generateOptions(correct) {
+            const choices = new Set([correct]);
+            while (choices.size < 4) {
+                let offset = Math.floor(Math.random() * 5) + 1;
+                let wrong = Math.random() > 0.5 ? correct + offset : correct - offset;
+                if (wrong > 0 && wrong !== correct) choices.add(wrong);
+            }
+            return Array.from(choices).sort(() => Math.random() - 0.5);
+        }
+
+        function startTimer() {
+            clearInterval(timerInterval);
+            timeLeft = 6;
+            const bar = document.getElementById('timer-bar');
+            const text = document.getElementById('timer-text');
+
+            timerInterval = setInterval(() => {
+                timeLeft -= 0.1;
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    clearInterval(timerInterval);
+                    handleAnswer(null, true);
+                }
+                
+                if (bar) bar.style.width = (timeLeft / 6 * 100) + '%';
+                if (text) text.innerText = timeLeft.toFixed(1) + 's';
+
+                // Colores de la barra
+                if (timeLeft < 1.5) bar.className = 'h-full bg-red-500 animate-pulse';
+                else if (timeLeft < 3) bar.className = 'h-full bg-yellow-400';
+                else bar.className = 'h-full bg-green-400';
+            }, 100);
+        }
+
+        function handleAnswer(choice, isTimeout = false) {
+            if (feedback) return;
+            clearInterval(timerInterval);
+
+            const q = currentQuestions[currentIndex];
+            const isCorrect = !isTimeout && choice === q.answer;
+            feedback = isCorrect ? 'correct' : 'wrong';
+
+            const overlay = document.getElementById('feedback-overlay');
+            overlay.classList.remove('hidden');
+            overlay.innerHTML = isCorrect 
+                ? `<i data-lucide="check-circle-2" class="text-green-500 w-32 h-32 opacity-80 animate-pop"></i>`
+                : `<i data-lucide="x-circle" class="text-red-500 w-32 h-32 opacity-80 animate-pop"></i>`;
+            lucide.createIcons();
+
+            if (isCorrect) {
+                score++;
+                stars++;
+                updateStars();
+            } else {
+                const eq = `${q.num1} × ${q.num2} = ${q.answer}`;
+                roundErrors.push(eq);
+                const key = `${q.num1}x${q.num2}`;
+                errorStats[key] = {
+                    label: eq,
+                    count: (errorStats[key]?.count || 0) + 1
+                };
+                saveStats();
+            }
+
+            setTimeout(() => {
+                feedback = null;
+                if (currentIndex < currentQuestions.length - 1) {
+                    currentIndex++;
+                    render();
+                } else {
+                    gameState = 'summary';
+                    render();
+                }
+            }, 1000);
+        }
+
+        // --- FUNCIONES DE UTILIDAD ---
+        function changeState(s) {
+            clearInterval(timerInterval);
+            gameState = s;
+            render();
+        }
+
+        function resetToMenu() {
+            changeState('menu');
+        }
+
+        function openResetModal() {
+            document.getElementById('reset-modal').style.display = 'flex';
+            lucide.createIcons();
+        }
+
+        function closeModal() {
+            document.getElementById('reset-modal').style.display = 'none';
+        }
+
+        function confirmResetStats() {
+            errorStats = {};
+            saveStats();
+            closeModal();
+            render();
+        }
+
+        // Iniciar app
+        window.onload = init;
+    </script>
+</body>
+</html>
